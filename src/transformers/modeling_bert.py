@@ -13,6 +13,10 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+#
+# modify for adding features
+# by jisu.Seo
+# 2020.11.04
 """PyTorch BERT model. """
 
 
@@ -1469,13 +1473,54 @@ class BertForTokenClassification(BertPreTrainedModel):
 
     authorized_unexpected_keys = [r"pooler"]
 
-    def __init__(self, config):
+    def __init__(self, config, ncate1_info, ocr_info, bracket_info, attr_info):
         super().__init__(config)
         self.num_labels = config.num_labels
 
         self.bert = BertModel(config, add_pooling_layer=False)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
         self.classifier = nn.Linear(config.hidden_size, config.num_labels)
+
+        # modified code by jisu.Seo
+        # ocr
+        self.use_ocr = ocr_info["use_ocr"]
+        self.ocr_no = ocr_info["ocr_no"]
+        self.ocr_embedding_dim = ocr_info["ocr_embedding_dim"]
+        self.ocr_embedding = nn.Embedding(self.ocr_no, self.ocr_embedding_dim)
+        self.ocrLayerNorm = nn.LayerNorm(self.ocr_embedding_dim, eps=config.layer_norm_eps)
+
+        # bracket
+        self.use_bracket = bracket_info["use_bracket"]
+        self.bracket_no = bracket_info["bracket_no"]
+        self.bracket_embedding_dim = bracket_info["bracket_embedding_dim"]
+        self.bracket_embedding = nn.Embedding(self.bracket_no, self.bracket_embedding_dim)
+        self.bracketLayerNorm = nn.LayerNorm(self.bracket_embedding_dim, eps=config.layer_norm_eps)
+
+        # attr
+        self.use_attr = attr_info["use_attr"]
+        self.attr_no = attr_info["attr_no"]
+        self.attr_embedding_dim = attr_info["attr_embedding_dim"]
+        self.attr_embedding = nn.Embedding(self.attr_no, self.attr_embedding_dim)
+        self.attrLayerNorm = nn.LayerNorm(self.attr_embedding_dim, eps=config.layer_norm_eps)
+
+        # ncate1
+        self.use_ncate1 = ncate1_info["use_ncate1"]
+        self.ncate1_no = ncate1_info["ncate1_no"]
+        self.ncate1_embedding_dim = ncate1_info["ncate1_embedding_dim"]
+        self.ncate1_embedding = nn.Embedding(self.ncate1_no, self.ncate1_embedding_dim)
+        self.ncate1LayerNorm = nn.LayerNorm(self.ncate1_embedding_dim, eps=config.layer_norm_eps)
+
+        add_dim = 0
+        if self.use_ocr:
+            add_dim += self.ocr_embedding_dim
+        if self.use_bracket:
+            add_dim += self.bracket_embedding_dim
+        if self.use_attr:
+            add_dim += self.attr_embedding_dim
+        if self.use_ncate1:
+            add_dim += self.ncate1_embedding_dim
+
+        self.classifier = nn.Linear((config.hidden_size + add_dim), config.num_labels)
 
         self.init_weights()
 
@@ -1498,6 +1543,10 @@ class BertForTokenClassification(BertPreTrainedModel):
         output_attentions=None,
         output_hidden_states=None,
         return_dict=None,
+        ncate1_ids=None,
+        ocr_ids=None,
+        bracket_ids=None,
+        attr_ids=None
     ):
         r"""
         labels (:obj:`torch.LongTensor` of shape :obj:`(batch_size, sequence_length)`, `optional`):
@@ -1520,6 +1569,31 @@ class BertForTokenClassification(BertPreTrainedModel):
 
         sequence_output = outputs[0]
 
+        # ocr Embedding
+        if self.use_ocr:
+            ocr_emb = self.ocr_embedding(ocr_ids)
+            ocr_emb = self.ocrLayerNorm(ocr_emb)
+            sequence_output = torch.cat([sequence_output, ocr_emb], dim=2)
+
+        # bracket Embedding
+        if self.use_bracket:
+            bracket_emb = self.bracket_embedding(bracket_ids)
+            bracket_emb = self.bracketLayerNorm(bracket_emb)
+            sequence_output = torch.cat([sequence_output, bracket_emb], dim=2)
+
+        # attr Embedding
+        if self.use_attr:
+            attr_emb = self.attr_embedding(attr_ids)
+            attr_emb = self.attrLayerNorm(attr_emb)
+            sequence_output = torch.cat([sequence_output, attr_emb], dim=2)
+
+        # cate1 embedding
+        if self.use_ncate1:
+            ncate1_emb = self.ncate1_embedding(ncate1_ids)
+            ncate1_emb = self.ncate1LayerNorm(ncate1_emb)
+            sequence_output = torch.cat([sequence_output, ncate1_emb], dim=2)
+
+        # classify
         sequence_output = self.dropout(sequence_output)
         logits = self.classifier(sequence_output)
 
