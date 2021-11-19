@@ -343,7 +343,7 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin):
         logger.info("Model weights saved in {}".format(output_model_file))
 
     @classmethod
-    def from_pretrained(cls, pretrained_model_name_or_path, ncate1_info, ocr_info, bracket_info, attr_info, *model_args, **kwargs):
+    def from_pretrained(cls, pretrained_model_name_or_path, brand_extractor_mode=False, *model_args, **kwargs):
         r"""Instantiate a pretrained pytorch model from a pre-trained model configuration.
 
         The model is set in evaluation mode by default using ``model.eval()`` (Dropout modules are deactivated)
@@ -413,6 +413,14 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin):
             model = BertModel.from_pretrained('./tf_model/my_tf_checkpoint.ckpt.index', from_tf=True, config=config)
 
         """
+        if brand_extractor_mode:
+            ncate1_info = kwargs.pop("ncate1_info", None)
+            ocr_info = kwargs.pop("ocr_info", None)
+            bracket_info = kwargs.pop("bracket_info", None)
+            attr_info = kwargs.pop("attr_info", None)
+        assert brand_extractor_mode and (None not in [ncate1_info, ocr_info, bracket_info, attr_info]), \
+            "brand_extractor_mode 조건이 맞지 않습니다."
+
         config = kwargs.pop("config", None)
         state_dict = kwargs.pop("state_dict", None)
         cache_dir = kwargs.pop("cache_dir", None)
@@ -509,7 +517,10 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin):
             resolved_archive_file = None
 
         # Instantiate model.
-        model = cls(config, ncate1_info, ocr_info, bracket_info, attr_info, *model_args, **model_kwargs)
+        if brand_extractor_mode:
+            model = cls(config, ncate1_info, ocr_info, bracket_info, attr_info, *model_args, **model_kwargs)
+        else:
+            model = cls(config, *model_args, **model_kwargs)
 
         if state_dict is None and not from_tf:
             try:
