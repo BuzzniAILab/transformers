@@ -1045,7 +1045,7 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin, PushToHubMix
             logger.info(f"Model pushed to the hub in this commit: {url}")
 
     @classmethod
-    def from_pretrained(cls, pretrained_model_name_or_path: Optional[Union[str, os.PathLike]], *model_args, **kwargs):
+    def from_pretrained(cls, pretrained_model_name_or_path: Optional[Union[str, os.PathLike]], brand_extractor_mode=False, *model_args, **kwargs):
         r"""
         Instantiate a pretrained pytorch model from a pre-trained model configuration.
 
@@ -1195,6 +1195,15 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin, PushToHubMix
             >>> model = BertModel.from_pretrained('bert-base-uncased', from_flax=True)
 
         """
+        if brand_extractor_mode:
+            ncate1_info = kwargs.pop("ncate1_info", None)
+            ocr_info = kwargs.pop("ocr_info", None)
+            bracket_info = kwargs.pop("bracket_info", None)
+            attr_info = kwargs.pop("attr_info", None)
+        assert not (brand_extractor_mode) or (None not in [ncate1_info, ocr_info, bracket_info, attr_info]), \
+            "brand_extractor_mode 조건이 맞지 않습니다."
+
+
         config = kwargs.pop("config", None)
         state_dict = kwargs.pop("state_dict", None)
         cache_dir = kwargs.pop("cache_dir", None)
@@ -1379,10 +1388,16 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin, PushToHubMix
             # and memory copying it on CPU or each GPU first
             with deepspeed.zero.Init(config_dict_or_path=deepspeed_config()):
                 with no_init_weights(_enable=_fast_init):
-                    model = cls(config, *model_args, **model_kwargs)
+                    if brand_extractor_mode:
+                        model = cls(config, ncate1_info, ocr_info, bracket_info, attr_info, *model_args, **model_kwargs)
+                    else:
+                        model = cls(config, *model_args, **model_kwargs)
         else:
             with no_init_weights(_enable=_fast_init):
-                model = cls(config, *model_args, **model_kwargs)
+                if brand_extractor_mode:
+                    model = cls(config, ncate1_info, ocr_info, bracket_info, attr_info, *model_args, **model_kwargs)
+                else:
+                    model = cls(config, *model_args, **model_kwargs)
 
         if from_pt:
             # restore default dtype

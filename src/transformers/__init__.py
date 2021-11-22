@@ -2376,6 +2376,7 @@ if TYPE_CHECKING:
             BertForQuestionAnswering,
             BertForSequenceClassification,
             BertForTokenClassification,
+            BertForTokenClassificationForBrandExtractor,
             BertLayer,
             BertLMHeadModel,
             BertModel,

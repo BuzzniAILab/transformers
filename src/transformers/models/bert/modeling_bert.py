@@ -1767,6 +1767,169 @@ class BertForTokenClassification(BertPreTrainedModel):
 
 @add_start_docstrings(
     """
+    Bert Model with a token classification head on top (a linear layer on top of the hidden-states output) e.g. for
+    Named-Entity-Recognition (NER) tasks.
+    """,
+    BERT_START_DOCSTRING,
+)
+class BertForTokenClassificationForBrandExtractor(BertPreTrainedModel):
+
+    _keys_to_ignore_on_load_unexpected = [r"pooler"]
+
+
+    def __init__(self, config, ncate1_info, ocr_info, bracket_info, attr_info):
+        super().__init__(config)
+        self.num_labels = config.num_labels
+
+        self.bert = BertModel(config, add_pooling_layer=False)
+        classifier_dropout = (
+            config.classifier_dropout if config.classifier_dropout is not None else config.hidden_dropout_prob
+        )
+        self.dropout = nn.Dropout(classifier_dropout)
+        self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+
+        # ocr
+        self.use_ocr = ocr_info["use_ocr"]
+        self.ocr_no = ocr_info["ocr_no"]
+        self.ocr_embedding_dim = ocr_info["ocr_embedding_dim"]
+        self.ocr_embedding = nn.Embedding(self.ocr_no, self.ocr_embedding_dim)
+        self.ocrLayerNorm = nn.LayerNorm(self.ocr_embedding_dim, eps=config.layer_norm_eps)
+
+        # bracket
+        self.use_bracket = bracket_info["use_bracket"]
+        self.bracket_no = bracket_info["bracket_no"]
+        self.bracket_embedding_dim = bracket_info["bracket_embedding_dim"]
+        self.bracket_embedding = nn.Embedding(self.bracket_no, self.bracket_embedding_dim)
+        self.bracketLayerNorm = nn.LayerNorm(self.bracket_embedding_dim, eps=config.layer_norm_eps)
+
+        # attr
+        self.use_attr = attr_info["use_attr"]
+        self.attr_no = attr_info["attr_no"]
+        self.attr_embedding_dim = attr_info["attr_embedding_dim"]
+        self.attr_embedding = nn.Embedding(self.attr_no, self.attr_embedding_dim)
+        self.attrLayerNorm = nn.LayerNorm(self.attr_embedding_dim, eps=config.layer_norm_eps)
+
+        # ncate1
+        self.use_ncate1 = ncate1_info["use_ncate1"]
+        self.ncate1_no = ncate1_info["ncate1_no"]
+        self.ncate1_embedding_dim = ncate1_info["ncate1_embedding_dim"]
+        self.ncate1_embedding = nn.Embedding(self.ncate1_no, self.ncate1_embedding_dim)
+        self.ncate1LayerNorm = nn.LayerNorm(self.ncate1_embedding_dim, eps=config.layer_norm_eps)
+
+        add_dim = 0
+        if self.use_ocr: add_dim += self.ocr_embedding_dim
+        if self.use_bracket: add_dim += self.bracket_embedding_dim
+        if self.use_attr: add_dim += self.attr_embedding_dim
+        if self.use_ncate1: add_dim += self.ncate1_embedding_dim
+
+        print("add_dim : ", add_dim, ", total hidden dim : ", config.hidden_size + add_dim)
+
+        self.classifier = nn.Linear((config.hidden_size + add_dim), config.num_labels)
+
+
+        self.init_weights()
+
+    @add_start_docstrings_to_model_forward(BERT_INPUTS_DOCSTRING.format("batch_size, sequence_length"))
+    @add_code_sample_docstrings(
+        tokenizer_class=_TOKENIZER_FOR_DOC,
+        checkpoint=_CHECKPOINT_FOR_DOC,
+        output_type=TokenClassifierOutput,
+        config_class=_CONFIG_FOR_DOC,
+    )
+    def forward(
+        self,
+        input_ids=None,
+        attention_mask=None,
+        token_type_ids=None,
+        position_ids=None,
+        head_mask=None,
+        inputs_embeds=None,
+        labels=None,
+        output_attentions=None,
+        output_hidden_states=None,
+        return_dict=None,
+        ncate1_ids=None,
+        ocr_ids=None,
+        bracket_ids=None,
+        attr_ids=None
+    ):
+        r"""
+        labels (:obj:`torch.LongTensor` of shape :obj:`(batch_size, sequence_length)`, `optional`):
+            Labels for computing the token classification loss. Indices should be in ``[0, ..., config.num_labels -
+            1]``.
+        """
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+
+        outputs = self.bert(
+            input_ids,
+            attention_mask=attention_mask,
+            token_type_ids=token_type_ids,
+            position_ids=position_ids,
+            head_mask=head_mask,
+            inputs_embeds=inputs_embeds,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
+        )
+
+        sequence_output = outputs[0]
+
+        # ocr Embedding
+        if self.use_ocr:
+            ocr_emb = self.ocr_embedding(ocr_ids)
+            ocr_emb = self.ocrLayerNorm(ocr_emb)
+            sequence_output = torch.cat([sequence_output, ocr_emb], dim=2)
+
+        # bracket Embedding
+        if self.use_bracket:
+            bracket_emb = self.bracket_embedding(bracket_ids)
+            bracket_emb = self.bracketLayerNorm(bracket_emb)
+            sequence_output = torch.cat([sequence_output, bracket_emb], dim=2)
+
+        # attr Embedding
+        if self.use_attr:
+            attr_emb = self.attr_embedding(attr_ids)
+            attr_emb = self.attrLayerNorm(attr_emb)
+            sequence_output = torch.cat([sequence_output, attr_emb], dim=2)
+
+        # cate1 embedding
+        if self.use_ncate1:
+            ncate1_emb = self.ncate1_embedding(ncate1_ids)
+            ncate1_emb = self.ncate1LayerNorm(ncate1_emb)
+            sequence_output = torch.cat([sequence_output, ncate1_emb], dim=2)
+
+        # classify
+        sequence_output = self.dropout(sequence_output)
+        logits = self.classifier(sequence_output)
+
+        loss = None
+        if labels is not None:
+            loss_fct = CrossEntropyLoss()
+            # Only keep active parts of the loss
+            if attention_mask is not None:
+                active_loss = attention_mask.view(-1) == 1
+                active_logits = logits.view(-1, self.num_labels)
+                active_labels = torch.where(
+                    active_loss, labels.view(-1), torch.tensor(loss_fct.ignore_index).type_as(labels)
+                )
+                loss = loss_fct(active_logits, active_labels)
+            else:
+                loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
+
+        if not return_dict:
+            output = (logits,) + outputs[2:]
+            return ((loss,) + output) if loss is not None else output
+
+        return TokenClassifierOutput(
+            loss=loss,
+            logits=logits,
+            hidden_states=outputs.hidden_states,
+            attentions=outputs.attentions,
+        )
+
+
+@add_start_docstrings(
+    """
     Bert Model with a span classification head on top for extractive question-answering tasks like SQuAD (a linear
     layers on top of the hidden-states output to compute `span start logits` and `span end logits`).
     """,
