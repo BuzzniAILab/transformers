@@ -1,5 +1,5 @@
 # coding=utf-8
-# Copyright 2018 The Google AI Language Team Authors.
+# Copyright 2020 The HuggingFace Team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -27,7 +27,12 @@ from .test_modeling_tf_common import TFModelTesterMixin, ids_tensor
 if is_tf_available():
     import tensorflow as tf
 
-    from transformers import TF_TRANSFO_XL_PRETRAINED_MODEL_ARCHIVE_LIST, TFTransfoXLLMHeadModel, TFTransfoXLModel
+    from transformers import (
+        TF_TRANSFO_XL_PRETRAINED_MODEL_ARCHIVE_LIST,
+        TFTransfoXLForSequenceClassification,
+        TFTransfoXLLMHeadModel,
+        TFTransfoXLModel,
+    )
 
 
 class TFTransfoXLModelTester:
@@ -55,6 +60,9 @@ class TFTransfoXLModelTester:
         self.scope = None
         self.seed = 1
         self.eos_token_id = 0
+        self.num_labels = 3
+        self.pad_token_id = self.vocab_size - 1
+        self.init_range = 0.01
 
     def prepare_config_and_inputs(self):
         input_ids_1 = ids_tensor([self.batch_size, self.seq_length], self.vocab_size)
@@ -77,7 +85,9 @@ class TFTransfoXLModelTester:
             div_val=self.div_val,
             n_layer=self.num_hidden_layers,
             eos_token_id=self.eos_token_id,
-            return_dict=True,
+            pad_token_id=self.vocab_size - 1,
+            init_range=self.init_range,
+            num_labels=self.num_labels,
         )
 
         return (config, input_ids_1, input_ids_2, lm_labels)
@@ -132,6 +142,11 @@ class TFTransfoXLModelTester:
             [(self.mem_len, self.batch_size, self.hidden_size)] * self.num_hidden_layers,
         )
 
+    def create_and_check_transfo_xl_for_sequence_classification(self, config, input_ids_1, input_ids_2, lm_labels):
+        model = TFTransfoXLForSequenceClassification(config)
+        result = model(input_ids_1)
+        self.parent.assertEqual(result.logits.shape, (self.batch_size, self.num_labels))
+
     def prepare_config_and_inputs_for_common(self):
         config_and_inputs = self.prepare_config_and_inputs()
         (config, input_ids_1, input_ids_2, lm_labels) = config_and_inputs
@@ -142,10 +157,15 @@ class TFTransfoXLModelTester:
 @require_tf
 class TFTransfoXLModelTest(TFModelTesterMixin, unittest.TestCase):
 
-    all_model_classes = (TFTransfoXLModel, TFTransfoXLLMHeadModel) if is_tf_available() else ()
+    all_model_classes = (
+        (TFTransfoXLModel, TFTransfoXLLMHeadModel, TFTransfoXLForSequenceClassification) if is_tf_available() else ()
+    )
     all_generative_model_classes = () if is_tf_available() else ()
     # TODO: add this test when TFTransfoXLLMHead has a linear output layer implemented
     test_resize_embeddings = False
+    test_head_masking = False
+    test_onnx = False
+    test_mismatched_shapes = False
 
     def setUp(self):
         self.model_tester = TFTransfoXLModelTester(self)
@@ -164,6 +184,32 @@ class TFTransfoXLModelTest(TFModelTesterMixin, unittest.TestCase):
         config_and_inputs = self.model_tester.prepare_config_and_inputs()
         self.model_tester.create_and_check_transfo_xl_lm_head(*config_and_inputs)
 
+    def test_transfo_xl_sequence_classification_model(self):
+        config_and_inputs = self.model_tester.prepare_config_and_inputs()
+        self.model_tester.create_and_check_transfo_xl_for_sequence_classification(*config_and_inputs)
+
+    def test_model_common_attributes(self):
+        config, inputs_dict = self.model_tester.prepare_config_and_inputs_for_common()
+        list_other_models_with_output_ebd = [TFTransfoXLForSequenceClassification]
+
+        for model_class in self.all_model_classes:
+            model = model_class(config)
+            assert isinstance(model.get_input_embeddings(), tf.keras.layers.Layer)
+            if model_class in list_other_models_with_output_ebd:
+                x = model.get_output_embeddings()
+                assert isinstance(x, tf.keras.layers.Layer)
+                name = model.get_bias()
+                assert name is None
+            else:
+                x = model.get_output_embeddings()
+                assert x is None
+                name = model.get_bias()
+                assert name is None
+
+    def test_xla_mode(self):
+        # TODO JP: Make TransfoXL XLA compliant
+        pass
+
     @slow
     def test_model_from_pretrained(self):
         for model_name in TF_TRANSFO_XL_PRETRAINED_MODEL_ARCHIVE_LIST[:1]:
@@ -173,157 +219,13 @@ class TFTransfoXLModelTest(TFModelTesterMixin, unittest.TestCase):
 
 @require_tf
 class TFTransfoXLModelLanguageGenerationTest(unittest.TestCase):
+    @unittest.skip("Skip test until #12651 is resolved.")
     @slow
     def test_lm_generate_transfo_xl_wt103(self):
         model = TFTransfoXLLMHeadModel.from_pretrained("transfo-xl-wt103")
-        input_ids = tf.convert_to_tensor(
-            [
-                [
-                    33,
-                    1297,
-                    2,
-                    1,
-                    1009,
-                    4,
-                    1109,
-                    11739,
-                    4762,
-                    358,
-                    5,
-                    25,
-                    245,
-                    22,
-                    1706,
-                    17,
-                    20098,
-                    5,
-                    3215,
-                    21,
-                    37,
-                    1110,
-                    3,
-                    13,
-                    1041,
-                    4,
-                    24,
-                    603,
-                    490,
-                    2,
-                    71477,
-                    20098,
-                    104447,
-                    2,
-                    20961,
-                    1,
-                    2604,
-                    4,
-                    1,
-                    329,
-                    3,
-                    6224,
-                    831,
-                    16002,
-                    2,
-                    8,
-                    603,
-                    78967,
-                    29546,
-                    23,
-                    803,
-                    20,
-                    25,
-                    416,
-                    5,
-                    8,
-                    232,
-                    4,
-                    277,
-                    6,
-                    1855,
-                    4601,
-                    3,
-                    29546,
-                    54,
-                    8,
-                    3609,
-                    5,
-                    57211,
-                    49,
-                    4,
-                    1,
-                    277,
-                    18,
-                    8,
-                    1755,
-                    15691,
-                    3,
-                    341,
-                    25,
-                    416,
-                    693,
-                    42573,
-                    71,
-                    17,
-                    401,
-                    94,
-                    31,
-                    17919,
-                    2,
-                    29546,
-                    7873,
-                    18,
-                    1,
-                    435,
-                    23,
-                    11011,
-                    755,
-                    5,
-                    5167,
-                    3,
-                    7983,
-                    98,
-                    84,
-                    2,
-                    29546,
-                    3267,
-                    8,
-                    3609,
-                    4,
-                    1,
-                    4865,
-                    1075,
-                    2,
-                    6087,
-                    71,
-                    6,
-                    346,
-                    8,
-                    5854,
-                    3,
-                    29546,
-                    824,
-                    1400,
-                    1868,
-                    2,
-                    19,
-                    160,
-                    2,
-                    311,
-                    8,
-                    5496,
-                    2,
-                    20920,
-                    17,
-                    25,
-                    15097,
-                    3,
-                    24,
-                    24,
-                    0,
-                ]
-            ],
-            dtype=tf.int32,
-        )
+        # fmt: off
+        input_ids = tf.convert_to_tensor([[33,1297,2,1,1009,4,1109,11739,4762,358,5,25,245,22,1706,17,20098,5,3215,21,37,1110,3,13,1041,4,24,603,490,2,71477,20098,104447,2,20961,1,2604,4,1,329,3,6224,831,16002,2,8,603,78967,29546,23,803,20,25,416,5,8,232,4,277,6,1855,4601,3,29546,54,8,3609,5,57211,49,4,1,277,18,8,1755,15691,3,341,25,416,693,42573,71,17,401,94,31,17919,2,29546,7873,18,1,435,23,11011,755,5,5167,3,7983,98,84,2,29546,3267,8,3609,4,1,4865,1075,2,6087,71,6,346,8,5854,3,29546,824,1400,1868,2,19,160,2,311,8,5496,2,20920,17,25,15097,3,24,24,0]],dtype=tf.int32)  # noqa: E231
+        # fmt: on
         #  In 1991 , the remains of Russian Tsar Nicholas II and his family
         #  ( except for Alexei and Maria ) are discovered .
         #  The voice of Nicholas's young son , Tsarevich Alexei Nikolaevich , narrates the
@@ -335,185 +237,9 @@ class TFTransfoXLModelLanguageGenerationTest(unittest.TestCase):
         #  the Virgin Mary , prompting him to become a priest . Rasputin quickly becomes famous ,
         #  with people , even a bishop , begging for his blessing . <eod> </s> <eos>
 
-        expected_output_ids = [
-            33,
-            1297,
-            2,
-            1,
-            1009,
-            4,
-            1109,
-            11739,
-            4762,
-            358,
-            5,
-            25,
-            245,
-            22,
-            1706,
-            17,
-            20098,
-            5,
-            3215,
-            21,
-            37,
-            1110,
-            3,
-            13,
-            1041,
-            4,
-            24,
-            603,
-            490,
-            2,
-            71477,
-            20098,
-            104447,
-            2,
-            20961,
-            1,
-            2604,
-            4,
-            1,
-            329,
-            3,
-            6224,
-            831,
-            16002,
-            2,
-            8,
-            603,
-            78967,
-            29546,
-            23,
-            803,
-            20,
-            25,
-            416,
-            5,
-            8,
-            232,
-            4,
-            277,
-            6,
-            1855,
-            4601,
-            3,
-            29546,
-            54,
-            8,
-            3609,
-            5,
-            57211,
-            49,
-            4,
-            1,
-            277,
-            18,
-            8,
-            1755,
-            15691,
-            3,
-            341,
-            25,
-            416,
-            693,
-            42573,
-            71,
-            17,
-            401,
-            94,
-            31,
-            17919,
-            2,
-            29546,
-            7873,
-            18,
-            1,
-            435,
-            23,
-            11011,
-            755,
-            5,
-            5167,
-            3,
-            7983,
-            98,
-            84,
-            2,
-            29546,
-            3267,
-            8,
-            3609,
-            4,
-            1,
-            4865,
-            1075,
-            2,
-            6087,
-            71,
-            6,
-            346,
-            8,
-            5854,
-            3,
-            29546,
-            824,
-            1400,
-            1868,
-            2,
-            19,
-            160,
-            2,
-            311,
-            8,
-            5496,
-            2,
-            20920,
-            17,
-            25,
-            15097,
-            3,
-            24,
-            24,
-            0,
-            33,
-            1,
-            1857,
-            2,
-            1,
-            1009,
-            4,
-            1109,
-            11739,
-            4762,
-            358,
-            5,
-            25,
-            245,
-            28,
-            1110,
-            3,
-            13,
-            1041,
-            4,
-            24,
-            603,
-            490,
-            2,
-            71477,
-            20098,
-            104447,
-            2,
-            20961,
-            1,
-            2604,
-            4,
-            1,
-            329,
-            3,
-            0,
-        ]
+        # fmt: off
+        expected_output_ids = [33,1297,2,1,1009,4,1109,11739,4762,358,5,25,245,22,1706,17,20098,5,3215,21,37,1110,3,13,1041,4,24,603,490,2,71477,20098,104447,2,20961,1,2604,4,1,329,3,6224,831,16002,2,8,603,78967,29546,23,803,20,25,416,5,8,232,4,277,6,1855,4601,3,29546,54,8,3609,5,57211,49,4,1,277,18,8,1755,15691,3,341,25,416,693,42573,71,17,401,94,31,17919,2,29546,7873,18,1,435,23,11011,755,5,5167,3,7983,98,84,2,29546,3267,8,3609,4,1,4865,1075,2,6087,71,6,346,8,5854,3,29546,824,1400,1868,2,19,160,2,311,8,5496,2,20920,17,25,15097,3,24,24,0,33,1,1857,2,1,1009,4,1109,11739,4762,358,5,25,245,28,1110,3,13,1041,4,24,603,490,2,71477,20098,104447,2,20961,1,2604,4,1,329,3,0]  # noqa: E231
+        # fmt: on
         #  In 1991, the remains of Russian Tsar Nicholas II and his family (
         #  except for Alexei and Maria ) are discovered. The voice of young son,
         #  Tsarevich Alexei Nikolaevich, narrates the remainder of the story.

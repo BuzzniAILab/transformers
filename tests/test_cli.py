@@ -13,7 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
 import unittest
 from unittest.mock import patch
 
@@ -28,6 +27,6 @@ class CLITest(unittest.TestCase):
 
         with CaptureStd() as cs:
             transformers.commands.transformers_cli.main()
-        assert "Python version" in cs.out
-        assert "Platform" in cs.out
-        assert "Using distributed or parallel set-up in script?" in cs.out
+        self.assertIn("Python version", cs.out)
+        self.assertIn("Platform", cs.out)
+        self.assertIn("Using distributed or parallel set-up in script?", cs.out)

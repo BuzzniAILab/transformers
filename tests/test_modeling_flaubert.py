@@ -1,5 +1,5 @@
 # coding=utf-8
-# Copyright 2018 The Google AI Language Team Authors.
+# Copyright 2020 The HuggingFace Team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,20 +12,21 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-
+import os
+import tempfile
 import unittest
 
-from transformers import is_torch_available
-from transformers.testing_utils import require_torch, slow, torch_device
+from transformers import FlaubertConfig, is_torch_available
+from transformers.testing_utils import require_torch, require_torch_gpu, slow, torch_device
 
 from .test_configuration_common import ConfigTester
 from .test_modeling_common import ModelTesterMixin, ids_tensor, random_attention_mask
 
 
 if is_torch_available():
+    import torch
+
     from transformers import (
-        FlaubertConfig,
         FlaubertForMultipleChoice,
         FlaubertForQuestionAnswering,
         FlaubertForQuestionAnsweringSimple,
@@ -34,7 +35,7 @@ if is_torch_available():
         FlaubertModel,
         FlaubertWithLMHeadModel,
     )
-    from transformers.modeling_flaubert import FLAUBERT_PRETRAINED_MODEL_ARCHIVE_LIST
+    from transformers.models.flaubert.modeling_flaubert import FLAUBERT_PRETRAINED_MODEL_ARCHIVE_LIST
 
 
 class FlaubertModelTester(object):
@@ -94,7 +95,22 @@ class FlaubertModelTester(object):
             is_impossible_labels = ids_tensor([self.batch_size], 2).float()
             choice_labels = ids_tensor([self.batch_size], self.num_choices)
 
-        config = FlaubertConfig(
+        config = self.get_config()
+
+        return (
+            config,
+            input_ids,
+            token_type_ids,
+            input_lengths,
+            sequence_labels,
+            token_labels,
+            is_impossible_labels,
+            choice_labels,
+            input_mask,
+        )
+
+    def get_config(self):
+        return FlaubertConfig(
             vocab_size=self.vocab_size,
             n_special=self.n_special,
             emb_dim=self.hidden_size,
@@ -111,19 +127,6 @@ class FlaubertModelTester(object):
             initializer_range=self.initializer_range,
             summary_type=self.summary_type,
             use_proj=self.use_proj,
-            return_dict=True,
-        )
-
-        return (
-            config,
-            input_ids,
-            token_type_ids,
-            input_lengths,
-            sequence_labels,
-            token_labels,
-            is_impossible_labels,
-            choice_labels,
-            input_mask,
         )
 
     def create_and_check_flaubert_model(
@@ -322,7 +325,12 @@ class FlaubertModelTester(object):
             choice_labels,
             input_mask,
         ) = config_and_inputs
-        inputs_dict = {"input_ids": input_ids, "token_type_ids": token_type_ids, "lengths": input_lengths}
+        inputs_dict = {
+            "input_ids": input_ids,
+            "token_type_ids": token_type_ids,
+            "lengths": input_lengths,
+            "attention_mask": input_mask,
+        }
         return config, inputs_dict
 
 
@@ -342,6 +350,21 @@ class FlaubertModelTest(ModelTesterMixin, unittest.TestCase):
         if is_torch_available()
         else ()
     )
+
+    # Flaubert has 2 QA models -> need to manually set the correct labels for one of them here
+    def _prepare_for_class(self, inputs_dict, model_class, return_labels=False):
+        inputs_dict = super()._prepare_for_class(inputs_dict, model_class, return_labels=return_labels)
+
+        if return_labels:
+            if model_class.__name__ == "FlaubertForQuestionAnswering":
+                inputs_dict["start_positions"] = torch.zeros(
+                    self.model_tester.batch_size, dtype=torch.long, device=torch_device
+                )
+                inputs_dict["end_positions"] = torch.zeros(
+                    self.model_tester.batch_size, dtype=torch.long, device=torch_device
+                )
+
+        return inputs_dict
 
     def setUp(self):
         self.model_tester = FlaubertModelTester(self)
@@ -383,3 +406,42 @@ class FlaubertModelTest(ModelTesterMixin, unittest.TestCase):
         for model_name in FLAUBERT_PRETRAINED_MODEL_ARCHIVE_LIST[:1]:
             model = FlaubertModel.from_pretrained(model_name)
             self.assertIsNotNone(model)
+
+    @slow
+    @require_torch_gpu
+    def test_torchscript_device_change(self):
+        config, inputs_dict = self.model_tester.prepare_config_and_inputs_for_common()
+        for model_class in self.all_model_classes:
+
+            # FlauBertForMultipleChoice behaves incorrectly in JIT environments.
+            if model_class == FlaubertForMultipleChoice:
+                return
+
+            config.torchscript = True
+            model = model_class(config=config)
+
+            inputs_dict = self._prepare_for_class(inputs_dict, model_class)
+            traced_model = torch.jit.trace(
+                model, (inputs_dict["input_ids"].to("cpu"), inputs_dict["attention_mask"].to("cpu"))
+            )
+
+            with tempfile.TemporaryDirectory() as tmp:
+                torch.jit.save(traced_model, os.path.join(tmp, "traced_model.pt"))
+                loaded = torch.jit.load(os.path.join(tmp, "traced_model.pt"), map_location=torch_device)
+                loaded(inputs_dict["input_ids"].to(torch_device), inputs_dict["attention_mask"].to(torch_device))
+
+
+@require_torch
+class FlaubertModelIntegrationTest(unittest.TestCase):
+    @slow
+    def test_inference_no_head_absolute_embedding(self):
+        model = FlaubertModel.from_pretrained("flaubert/flaubert_base_cased")
+        input_ids = torch.tensor([[0, 345, 232, 328, 740, 140, 1695, 69, 6078, 1588, 2]])
+        output = model(input_ids)[0]
+        expected_shape = torch.Size((1, 11, 768))
+        self.assertEqual(output.shape, expected_shape)
+        expected_slice = torch.tensor(
+            [[[-2.6251, -1.4298, -0.0227], [-2.8510, -1.6387, 0.2258], [-2.8114, -1.1832, -0.3066]]]
+        )
+
+        self.assertTrue(torch.allclose(output[:, :3, :3], expected_slice, atol=1e-4))
