@@ -16,7 +16,7 @@
 import os
 import unittest
 
-from transformers.tokenization_phobert import VOCAB_FILES_NAMES, PhobertTokenizer
+from transformers.models.phobert.tokenization_phobert import VOCAB_FILES_NAMES, PhobertTokenizer
 
 from .test_tokenization_common import TokenizerTesterMixin
 
@@ -24,6 +24,7 @@ from .test_tokenization_common import TokenizerTesterMixin
 class PhobertTokenizationTest(TokenizerTesterMixin, unittest.TestCase):
 
     tokenizer_class = PhobertTokenizer
+    test_rust_tokenizer = False
 
     def setUp(self):
         super().setUp()
@@ -39,7 +40,7 @@ class PhobertTokenizationTest(TokenizerTesterMixin, unittest.TestCase):
 
         with open(self.vocab_file, "w", encoding="utf-8") as fp:
             for token in vocab_tokens:
-                fp.write("{} {}".format(token, vocab_tokens[token]) + "\n")
+                fp.write(f"{token} {vocab_tokens[token]}\n")
         with open(self.merges_file, "w", encoding="utf-8") as fp:
             fp.write("\n".join(merges))
 

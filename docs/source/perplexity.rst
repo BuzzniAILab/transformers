@@ -1,3 +1,15 @@
+.. 
+    Copyright 2020 The HuggingFace Team. All rights reserved.
+
+    Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
+    the License. You may obtain a copy of the License at
+
+        http://www.apache.org/licenses/LICENSE-2.0
+
+    Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+    an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+    specific language governing permissions and limitations under the License.
+
 Perplexity of fixed-length models
 =======================================================================================================================
 
@@ -6,8 +18,8 @@ that the metric applies specifically to classical language models (sometimes cal
 models) and is not well defined for masked language models like BERT (see :doc:`summary of the models
 <model_summary>`).
 
-Perplexity is defined as the exponentiated average log-likelihood of a sequence. If we have a tokenized sequence
-:math:`X = (x_0, x_1, \dots, x_t)`, then the perplexity of :math:`X` is,
+Perplexity is defined as the exponentiated average negative log-likelihood of a sequence. If we have a tokenized
+sequence :math:`X = (x_0, x_1, \dots, x_t)`, then the perplexity of :math:`X` is,
 
 .. math::
 
@@ -62,7 +74,7 @@ sliding the context window so that the model has more context when making each p
 This is a closer approximation to the true decomposition of the sequence probability and will typically yield a more
 favorable score. The downside is that it requires a separate forward pass for each token in the corpus. A good
 practical compromise is to employ a strided sliding window, moving the context by larger strides rather than sliding by
-1 token a time. This allows computation to procede much faster while still giving the model a large context to make
+1 token a time. This allows computation to proceed much faster while still giving the model a large context to make
 predictions at each step.
 
 Example: Calculating perplexity with GPT-2 in 🤗 Transformers
@@ -84,11 +96,11 @@ dataset in memory.
 
 .. code-block:: python
 
-    from nlp import load_dataset
+    from datasets import load_dataset
     test = load_dataset('wikitext', 'wikitext-2-raw-v1', split='test')
     encodings = tokenizer('\n\n'.join(test['text']), return_tensors='pt')
 
-With 🤗 Transformers, we can simply pass the ``input_ids`` as the ``labels`` to our model, and the average
+With 🤗 Transformers, we can simply pass the ``input_ids`` as the ``labels`` to our model, and the average negative
 log-likelihood for each token is returned as the loss. With our sliding window approach, however, there is overlap in
 the tokens we pass to the model at each iteration. We don't want the log-likelihood for the tokens we're just treating
 as context to be included in our loss, so we can set these targets to ``-100`` so that they are ignored. The following
@@ -98,10 +110,13 @@ available to condition on).
 
 .. code-block:: python
 
+    import torch
+    from tqdm import tqdm
+
     max_length = model.config.n_positions
     stride = 512
 
-    lls = []
+    nlls = []
     for i in tqdm(range(0, encodings.input_ids.size(1), stride)):
         begin_loc = max(i + stride - max_length, 0)
         end_loc = min(i + stride, encodings.input_ids.size(1))
@@ -112,11 +127,11 @@ available to condition on).
 
         with torch.no_grad():
             outputs = model(input_ids, labels=target_ids)
-            log_likelihood = outputs[0] * trg_len
+            neg_log_likelihood = outputs[0] * trg_len
 
-        lls.append(log_likelihood)
+        nlls.append(neg_log_likelihood)
 
-    ppl = torch.exp(torch.stack(lls).sum() / end_loc)
+    ppl = torch.exp(torch.stack(nlls).sum() / end_loc)
 
 Running this with the stride length equal to the max input length is equivalent to the suboptimal, non-sliding-window
 strategy we discussed above. The smaller the stride, the more context the model will have in making each prediction,
