@@ -606,6 +606,7 @@ if is_torch_available():
             "BertForQuestionAnswering",
             "BertForSequenceClassification",
             "BertForTokenClassification",
+            "BertForTokenClassificationForBrandExtractor",
             "BertLayer",
             "BertLMHeadModel",
             "BertModel",
