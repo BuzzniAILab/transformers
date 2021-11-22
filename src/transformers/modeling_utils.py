@@ -418,7 +418,7 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin):
             ocr_info = kwargs.pop("ocr_info", None)
             bracket_info = kwargs.pop("bracket_info", None)
             attr_info = kwargs.pop("attr_info", None)
-        assert brand_extractor_mode and (None not in [ncate1_info, ocr_info, bracket_info, attr_info]), \
+        assert not(brand_extractor_mode) or (None not in [ncate1_info, ocr_info, bracket_info, attr_info]), \
             "brand_extractor_mode 조건이 맞지 않습니다."
 
         config = kwargs.pop("config", None)
